@@ -56,6 +56,10 @@ def get_urls():
     return new_urls, old_urls
 
 name_id_mapping = dict()
+temp_files_path = Path("tmp")
+html_files_path = Path("html")
+if not html_files_path.exists():
+    html_files_path.mkdir(parents=True)
 
 def fill_mapping(file):
     with open(file) as fd:
@@ -63,9 +67,10 @@ def fill_mapping(file):
         for card in reader:
             name_id_mapping[card["name"]] = card["id"]
 
-def find_by_id_name(card_name):
+def find_by_id_name(card_name, logger):
     card_id = name_id_mapping.get(card_name)
-
+    if card_id is None:
+        logger.warning("The card '{card_name}' does not have an entry")
     return card_id or "-1"
 
 def chunks(lst, n):
@@ -77,9 +82,14 @@ def hash(string):
     hash_object = hashlib.md5(string.encode())
     return hash_object.hexdigest()
 
-def get_deck_info(deck_url):
+
+
+def get_deck_info(deck_url, logger):
     deck_response = requests.get(deck_url)
     soup_deck = BeautifulSoup(deck_response.text, "lxml")
+    parsd = urlparse(url)
+    with open(Path(html_files_path, f"{slugify(parsd.path)}.html"), "w") as writable:
+        writable.write(deck_desponse.text)
     article_content = soup_deck.find("div", {"class":"article-content"})
     if not article_content or not article_content.find("table"):
         # no content
@@ -90,7 +100,7 @@ def get_deck_info(deck_url):
     if "author" in deck_info:
         deck_info["author"] = hash(deck_info["author"])
     if "master" in deck_info:
-        deck_info["deck master"] = find_by_id_name(deck_info["deck master"])
+        deck_info["deck master"] = find_by_id_name(deck_info["deck master"], logger)
 
     decks = defaultdict(list)
     deck_name = "main"
@@ -135,45 +145,55 @@ def get_deck_info(deck_url):
 
     return deck_info
 
-new_urls, old_urls = get_urls()
-fill_mapping("../yugioh-cards/data/cards.csv")
 
-temp_files_path = Path("tmp")
+def download_data(logger):
+    new_urls, old_urls = get_urls()
+    fill_mapping("../yugioh-cards/data/cards.csv")
 
-print(f"found {len(new_urls)} new decks")
+    print(f"found {len(new_urls)} new decks")
 
-for url in new_urls + old_urls:
-    parsd = urlparse(url)
-    try:
-        destination_file = Path(temp_files_path, f"{slugify(parsd.path)}.json")
-        if destination_file.exists():
-            continue
-        deck_info = get_deck_info(url)
-        if not deck_info:
-            continue
-        with open(destination_file, "w") as fd:
-            json.dump(deck_info, fd)
+    for url in new_urls + old_urls:
+        parsd = urlparse(url)
+        try:
+            destination_file = Path(temp_files_path, f"{slugify(parsd.path)}.json")
+            if destination_file.exists():
+                continue
+            deck_info = get_deck_info(url, logger)
+            if not deck_info:
+                continue
+            with open(destination_file, "w") as fd:
+                json.dump(deck_info, fd)
+        except:
+            logging.error("Exception occurred", exc_info=True)
 
-        time.sleep(0.05)
-    except:
-        pass
+def process_data(logger):
+    output_folder = Path("data")
+    if output_folder.exists():
+        shutil.rmtree(output_folder)
+    for json_file in sorted(temp_files_path.glob("*.json")):
+        deck = json.load(json_file.open())
+        date = dateparser.parse(deck["submission date"]) if "submission date" in deck else datetime.datetime.min
+        deck["submission date"] = date.isoformat()
+
+        keys = list(deck.keys())
+        for k in keys:
+            deck[slugify(k,separator="_")] = deck.pop(k)
+
+        output_file = Path(output_folder, f"{date.year:04}", f"{date.month:02}.jsonl")
+        if not output_file.parent.exists():
+            output_file.parent.mkdir(parents=True)
+        with open(output_file, "a") as fd:
+            json.dump(deck, fd)
+            fd.write("\n")
 
 
-output_folder = Path("data")
-if output_folder.exists():
-    shutil.rmtree(output_folder)
-for json_file in sorted(temp_files_path.glob("*.json")):
-    deck = json.load(json_file.open())
-    date = dateparser.parse(deck["submission date"]) if "submission date" in deck else datetime.datetime.min
-    deck["submission date"] = date.isoformat()
+@click.command()
+@click.argument("log_file", type=click.Path(dir_okay=False))
+def main(log_file):
+    logger = setup_logger(log_file)
+    download_data(logger)
+    process_data(logger)
 
-    keys = list(deck.keys())
-    for k in keys:
-        deck[slugify(k,separator="_")] = deck.pop(k)
 
-    output_file = Path(output_folder, f"{date.year:04}", f"{date.month:02}.jsonl")
-    if not output_file.parent.exists():
-        output_file.parent.mkdir(parents=True)
-    with open(output_file, "a") as fd:
-        json.dump(deck, fd)
-        fd.write("\n")
+if __name__ == "__main__":
+    main()
