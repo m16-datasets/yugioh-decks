@@ -1,9 +1,11 @@
 {
-  "title": "Yu-Gi-Oh! Decks",
+  "title": "Yu-Gi-Oh! Decks (from ygoprodeck.com)",
   "id": "ioexception/yugioh-decks",
+  "description": "All the Yu-Gi-Oh! decks created by the community at ygoprodeck.com.\nObtained by scraping their site so I am not the owner of any of this information.",
   "licenses": [
     {
       "name": "other"
     }
   ]
 }
+

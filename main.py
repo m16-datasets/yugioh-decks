@@ -7,8 +7,10 @@ import shutil
 from collections import defaultdict
 from slugify import slugify
 from urllib.parse import urlparse
+from kaggle import api
 import json
 import time
+import logging
 import datetime
 import hashlib
 import dateparser
@@ -57,6 +59,8 @@ def get_urls():
 
 name_id_mapping = dict()
 temp_files_path = Path("tmp")
+if not temp_files_path.exists():
+    temp_files_path.mkdir()
 html_files_path = Path("html")
 if not html_files_path.exists():
     html_files_path.mkdir(parents=True)
@@ -70,7 +74,7 @@ def fill_mapping(file):
 def find_by_id_name(card_name, logger):
     card_id = name_id_mapping.get(card_name)
     if card_id is None:
-        logger.warning("The card '{card_name}' does not have an entry")
+        logger.warning(f"The card '{card_name}' does not have an entry")
     return card_id or "-1"
 
 def chunks(lst, n):
@@ -87,9 +91,9 @@ def hash(string):
 def get_deck_info(deck_url, logger):
     deck_response = requests.get(deck_url)
     soup_deck = BeautifulSoup(deck_response.text, "lxml")
-    parsd = urlparse(url)
+    parsd = urlparse(deck_url)
     with open(Path(html_files_path, f"{slugify(parsd.path)}.html"), "w") as writable:
-        writable.write(deck_desponse.text)
+        writable.write(deck_response.text)
     article_content = soup_deck.find("div", {"class":"article-content"})
     if not article_content or not article_content.find("table"):
         # no content
@@ -148,9 +152,10 @@ def get_deck_info(deck_url, logger):
 
 def download_data(logger):
     new_urls, old_urls = get_urls()
+    logger.info("filling card mapping")
     fill_mapping("../yugioh-cards/data/cards.csv")
 
-    print(f"found {len(new_urls)} new decks")
+    logger.info(f"found {len(new_urls)} new decks")
 
     for url in new_urls + old_urls:
         parsd = urlparse(url)
@@ -168,8 +173,9 @@ def download_data(logger):
 
 def process_data(logger):
     output_folder = Path("data")
-    if output_folder.exists():
-        shutil.rmtree(output_folder)
+    for element in output_folder.glob('**/*'):
+        if element.is_dir():
+            shutil.rmtree(element)
     for json_file in sorted(temp_files_path.glob("*.json")):
         deck = json.load(json_file.open())
         date = dateparser.parse(deck["submission date"]) if "submission date" in deck else datetime.datetime.min
@@ -185,6 +191,17 @@ def process_data(logger):
         with open(output_file, "a") as fd:
             json.dump(deck, fd)
             fd.write("\n")
+    api.dataset_create_version("data", "Daily dataset update", dir_mode="zip", quiet=False)
+
+
+def setup_logger(log_file):
+    logger = logging.getLogger("yugioh")
+    f_handler = logging.FileHandler(log_file)
+    logger.setLevel(logging.INFO)
+    f_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    f_handler.setFormatter(f_format)
+    logger.addHandler(f_handler)
+    return logger 
 
 
 @click.command()
